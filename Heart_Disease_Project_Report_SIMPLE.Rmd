@@ -1,0 +1,194 @@
+---
+title: "Heart Disease Project Report"
+author: "Emilio Velazquez"
+date: "August 18, 2025"
+output:
+  pdf_document:
+    number_sections: true
+fontsize: 11pt
+geometry: margin=1in
+---
+
+# Introduction
+
+This project investigates factors associated with heart disease using a dataset of 250 patients. 
+I summarize the data, create clear graphs, and perform inferential statistics including: a confidence interval, a chi square test of association, a simple linear regression, and a one way ANOVA. In my opinion this is a exaustive analysis of this data set which draws out correlations between factors.
+
+# Data
+
+**Observational units:** individual adult patients.  
+**Variables:**  
+- `age` (years)  
+- `sex` (0 female, 1 male)  
+- `cp` chest pain type (0 typical, 1 atypical, 2 non anginal, 3 asymptomatic)  
+- `trestbps` resting blood pressure (mm Hg)  
+- `chol` serum cholesterol (mg/dL)  
+- `thalach` maximum heart rate  
+- `exang` exercise induced angina (0 no, 1 yes)  
+- `target` heart disease presence (1 yes, 0 no)
+
+**Sample size:** n = 250.  
+**File needed:** `heart_project_dataset.csv` must be in the **same folder** as this `.Rmd` before knitting.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 7, fig.height = 4.5)
+```
+
+```{r libraries}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(broom)     
+
+suppressWarnings( try(library(car), silent = TRUE) )
+```
+
+```{r import-data}
+heart <- readr::read_csv("heart_project_dataset.csv", show_col_types = FALSE)
+
+heart <- heart %>%
+  mutate(
+    sex = as.integer(sex),
+    cp = as.integer(cp),
+    exang = as.integer(exang),
+    target = as.integer(target)
+  )
+
+knitr::kable(head(heart), caption = "First six rows of the dataset")
+```
+
+```{r summaries}
+summary(heart[, c("age", "trestbps", "chol", "thalach")])
+```
+
+# Exploratory Graphs
+
+```{r hist-age, fig.cap="Histogram of age"}
+ggplot(heart, aes(x = age)) +
+  geom_histogram(bins = 15, color = "black", fill = "grey70") +
+  labs(x = "Age", y = "Count")
+```
+
+```{r hist-chol, fig.cap="Histogram of cholesterol"}
+ggplot(heart, aes(x = chol)) +
+  geom_histogram(bins = 15, color = "black", fill = "grey70") +
+  labs(x = "Cholesterol (mg/dL)", y = "Count")
+```
+
+```{r scatter-thalach-age, fig.cap="Scatter: max heart rate vs age with fitted line"}
+ggplot(heart, aes(x = age, y = thalach)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(x = "Age", y = "Max heart rate (thalach)")
+```
+
+```{r box-chol-cp, fig.cap="Boxplots of cholesterol by chest pain type"}
+ggplot(heart, aes(x = factor(cp), y = chol)) +
+  geom_boxplot() +
+  labs(x = "Chest pain type (cp)", y = "Cholesterol (mg/dL)")
+```
+
+```{r bar-disease-sex, fig.cap="Disease prevalence by sex"}
+prev_by_sex <- heart %>%
+  group_by(sex) %>%
+  summarise(prop = mean(target), .groups = "drop") %>%
+  mutate(sex = ifelse(sex == 1, "Male", "Female"))
+
+ggplot(prev_by_sex, aes(x = sex, y = prop)) +
+  geom_col(fill = "grey60", color = "black") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(x = "Sex", y = "Proportion with disease")
+```
+
+# Inference
+
+## Confidence interval for difference in proportions (male minus female)
+
+```{r ci-proportions}
+
+tab_sex <- table(
+  sex    = factor(heart$sex,    levels = c(0, 1)),
+  target = factor(heart$target, levels = c(0, 1))
+)
+tab_sex
+
+
+male_cases   <- tab_sex[2, 2]
+female_cases <- tab_sex[1, 2]
+male_total   <- sum(tab_sex[2, ])
+female_total <- sum(tab_sex[1, ])
+
+x <- c(male_cases, female_cases)
+n <- c(male_total, female_total)
+
+prop_out <- prop.test(x = x, n = n, correct = FALSE)
+prop_out
+
+p_male   <- x[1] / n[1]
+p_female <- x[2] / n[2]
+p_pool   <- (x[1] + x[2]) / (n[1] + n[2])
+se_diff  <- sqrt(p_pool * (1 - p_pool) * (1/n[1] + 1/n[2]))
+diff_hat <- p_male - p_female
+ci_diff  <- c(diff_hat - 1.96 * se_diff, diff_hat + 1.96 * se_diff)
+
+diff_hat; ci_diff
+
+```
+
+**Interpretation.** The 95 percent CI for the difference in prevalence (male minus female) estimates the range of plausible differences. If the CI excludes 0, it indicates a difference in prevalence by sex.
+
+## Chi square test of association: chest pain type vs disease
+
+```{r chi-square}
+tab_cp <- table(cp = heart$cp, target = heart$target)
+tab_cp
+chisq.test(tab_cp)
+```
+
+**Assumptions.** Cases are independent and expected counts are not too small.
+
+## Simple linear regression: thalach on age
+
+```{r lm-thalach-age}
+mod_lm <- lm(thalach ~ age, data = heart)
+summary(mod_lm)
+confint(mod_lm, parm = "age", level = 0.95)
+```
+
+```{r lm-diagnostics, fig.cap="Regression diagnostics"}
+par(mfrow = c(1, 2))
+plot(mod_lm, which = 1)   
+plot(mod_lm, which = 2)  
+par(mfrow = c(1, 1))
+```
+
+**Interpretation.** The slope for age indicates the average change in maximal heart rate per one year increase in age. I also report a 95 percent CI for the slope and R squared from the model.
+
+## One way ANOVA: cholesterol by chest pain type
+
+```{r anova-chol}
+mod_aov <- aov(chol ~ factor(cp), data = heart)
+summary(mod_aov)
+```
+
+```{r anova-assumptions}
+
+if ("package:car" %in% search()) {
+  car::leveneTest(chol ~ factor(cp), data = heart)
+} else {
+  bartlett.test(chol ~ factor(cp), data = heart)
+}
+
+resid_aov <- residuals(mod_aov)
+shapiro.test(resid_aov)
+```
+
+```{r tukey}
+TukeyHSD(mod_aov)
+```
+
+**Interpretation.** If the ANOVA F test is significant, not all group means are equal. I then examine Tukey comparisons to see which pairs differ.
+
+# Conclusion
+
+The analysis suggests differences in heart disease prevalence by sex, a negative association between age and maximal heart rate, and cholesterol differences across chest pain types. These findings align with clinical expectations. This is an observational dataset, so causation is not inferred. A next step would be a multivariable logistic regression for disease that adjusts for age, sex, and other risk factors, to possibly find more of a correlation between factors.
